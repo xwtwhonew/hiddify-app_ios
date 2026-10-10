@@ -83,8 +83,16 @@ jobs:
           mv "$RUNNER_TEMP/default_proxy.json" assets/config/default_proxy.json
           echo "Default proxy taken from secrets"
 
+      - name: Version
+        run: |
+          # The run number goes onto the patch and build numbers, so every build gets a higher version
+          VERSION=$(sed -n 's/^version: *//p' pubspec.yaml)
+          NAME=${VERSION%+*}
+          echo "BUILD_NAME=${NAME%.*}.$(( ${NAME##*.} + ${{ github.run_number }} ))" >> "$GITHUB_ENV"
+          echo "BUILD_NUMBER=$(( ${VERSION#*+} + ${{ github.run_number }} ))" >> "$GITHUB_ENV"
+
       - name: Build unsigned app
-        run: flutter build ios --release --no-codesign --target lib/main_prod.dart
+        run: flutter build ios --release --no-codesign --target lib/main_prod.dart --build-name "$BUILD_NAME" --build-number "$BUILD_NUMBER"
 
       - name: Fake-sign
         run: |
@@ -126,7 +134,7 @@ jobs:
         run: |
           APP=build/ios/iphoneos/Runner.app
           APP_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")
-          VERSION=$(sed -n 's/^version: *//p' pubspec.yaml)-${{ github.run_number }}
+          VERSION=$BUILD_NAME
           mkdir -p out
 
           # $1: dpkg architecture, $2: jailbreak root ("" for rootful)
