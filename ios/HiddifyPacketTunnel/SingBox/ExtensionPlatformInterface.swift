@@ -217,7 +217,7 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
         }
     }
 
-    public func usePlatformAutoDetectInterfaceControl() -> Bool {
+    public func usePlatformAutoDetectControl() -> Bool {
         false
     }
     public func findConnectionOwner(_ ipProtocol: Int32, sourceAddress: String?, sourcePort: Int32, destinationAddress: String?, destinationPort: Int32) throws -> LibboxConnectionOwner {
@@ -510,7 +510,7 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
     public func systemCertificates() -> (any LibboxStringIteratorProtocol)? {
         nil
     }
-    public func autoDetectInterfaceControl(_: Int32) throws {}
+    public func autoDetectControl(_: Int32) throws {}
 
     public func cancelNotification(_: String?, typeID _: Int32) throws {}
 
