@@ -163,14 +163,13 @@ jobs:
             xattr -cr "$root"
             dpkg-deb -Zxz --root-owner-group -b "$root" "out/Hiddify_${VERSION}_$1.deb"
           }
+          # Rootless only (Dopamine); add `package iphoneos-arm ""` for rootful jailbreaks
           package iphoneos-arm64 /var/jb
-          package iphoneos-arm ""
           ls -l out
 
           {
             echo "### Hiddify $VERSION"
             echo "- \`iphoneos-arm64\`: rootless jailbreaks (Dopamine, palera1n rootless)"
-            echo "- \`iphoneos-arm\`: rootful jailbreaks (palera1n rootful)"
             echo
             echo "hiddify-core: $CORE_VERSION"
           } >> "$GITHUB_STEP_SUMMARY"
