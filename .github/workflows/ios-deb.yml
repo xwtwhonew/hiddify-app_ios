@@ -143,6 +143,9 @@ jobs:
             rm -rf "$root"
             mkdir -p "$root/DEBIAN" "$root$2/Applications"
             ditto "$APP" "$root$app"
+            # The app runs as mobile, but Flutter.framework comes out of the SDK cache owner-only (0700/0600),
+            # and dpkg keeps those modes, so dyld could not load it
+            chmod -R a+rX,go-w "$root$app"
             printf '%s\n' \
               "Package: $APP_ID" \
               "Name: Hiddify" \
