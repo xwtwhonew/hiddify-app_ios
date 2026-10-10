@@ -103,7 +103,9 @@ jobs:
           EXT_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APPEX/Info.plist")
 
           # The project's entitlements with the build variable filled in, minus the macOS sandbox and push keys,
-          # plus the identifiers a provisioning profile would otherwise supply
+          # plus the identifiers a provisioning profile would otherwise supply.
+          # Dopamine trust-caches every binary, so both targets run as unsandboxed platform binaries, and the
+          # system policy keeps those out of their own data containers unless they hold the AppDataContainers storage class
           entitlements() {
             sed 's/\$(BASE_BUNDLE_IDENTIFIER)/'"$BASE_ID"'/g' "$1" > "$3"
             for key in aps-environment com.apple.security.app-sandbox com.apple.security.network.client com.apple.security.network.server; do
@@ -114,10 +116,24 @@ jobs:
               -c "Add :com.apple.developer.team-identifier string $TEAM_ID" \
               -c "Add :keychain-access-groups array" \
               -c "Add :keychain-access-groups:0 string $TEAM_ID.$APP_ID" \
+              -c "Add :com.apple.private.security.storage.AppDataContainers bool true" \
               "$3"
           }
           entitlements ios/Runner/Runner.entitlements "$APP_ID" "$RUNNER_TEMP/app.entitlements"
           entitlements ios/HiddifyPacketTunnel/HiddifyPacketTunnel.entitlements "$EXT_ID" "$RUNNER_TEMP/tunnel.entitlements"
+
+          # The same policy lets a platform binary open only the IOKit user clients its entitlements list, and Flutter
+          # aborts at launch without Metal. These are the GPU and surface clients Apple's own splashboardd holds.
+          GPU_CLIENTS=(
+            AGXCommandQueue AGXDevice AGXDeviceUserClient AGXSharedUserClient AppleJPEGDriverUserClient
+            IOAccelContext IOAccelContext2 IOAccelDevice IOAccelDevice2 IOAccelSharedUserClient IOAccelSharedUserClient2
+            IOAccelSubmitter2 IOMobileFramebufferUserClient IOSurfaceAcceleratorClient IOSurfaceRootUserClient
+          )
+          gpu=(-c "Add :com.apple.security.iokit-user-client-class array")
+          for i in "${!GPU_CLIENTS[@]}"; do
+            gpu+=(-c "Add :com.apple.security.iokit-user-client-class:$i string ${GPU_CLIENTS[$i]}")
+          done
+          /usr/libexec/PlistBuddy "${gpu[@]}" "$RUNNER_TEMP/app.entitlements"
 
           sign() { codesign --force --sign - --timestamp=none "$@"; }
           xattr -cr "$APP"
