@@ -45,8 +45,12 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
         if options.getAutoRoute() {
             settings.mtu = NSNumber(value: options.getMTU())
 
-           let dnsServer = try options.getDNSServerAddress()
-            let dnsSettings = NEDNSSettings(servers: [dnsServer.value,"fdfe:dcba:9876::1"])
+            var dnsServers: [String] = []
+            let dnsServerIterator = try options.getDNSServerAddress()
+            while dnsServerIterator.hasNext() {
+                dnsServers.append(dnsServerIterator.next())
+            }
+            let dnsSettings = NEDNSSettings(servers: dnsServers + ["fdfe:dcba:9876::1"])
             dnsSettings.matchDomains = [""]
             dnsSettings.matchDomainsNoSearch = true
             settings.dnsSettings = dnsSettings
@@ -213,7 +217,7 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
         }
     }
 
-    public func usePlatformAutoDetectControl() -> Bool {
+    public func usePlatformAutoDetectInterfaceControl() -> Bool {
         false
     }
     public func findConnectionOwner(_ ipProtocol: Int32, sourceAddress: String?, sourcePort: Int32, destinationAddress: String?, destinationPort: Int32) throws -> LibboxConnectionOwner {
@@ -506,6 +510,62 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
     public func systemCertificates() -> (any LibboxStringIteratorProtocol)? {
         nil
     }
-    public func autoDetectControl(_: Int32) throws {}
+    public func autoDetectInterfaceControl(_: Int32) throws {}
 
+    public func cancelNotification(_: String?, typeID _: Int32) throws {}
+
+    public func startNeighborMonitor(_: LibboxNeighborUpdateListenerProtocol?) throws {}
+
+    public func closeNeighborMonitor(_: LibboxNeighborUpdateListenerProtocol?) throws {}
+
+    public func registerMyInterface(_: String?) {}
+
+    public func tailscaleHostname() -> String {
+        ""
+    }
+
+    // Shell, SFTP, bridge and auto redirect need a privileged helper, which an iOS extension cannot have
+    public func usePlatformShell() -> Bool {
+        false
+    }
+
+    public func checkPlatformShell() throws {
+        throw notSupported("platform shell")
+    }
+
+    public func openShellSession(_: LibboxPlatformUser?, command _: String?, environ _: (any LibboxStringIteratorProtocol)?, term _: String?, rows _: Int32, cols _: Int32) throws -> any LibboxShellSessionProtocol {
+        throw notSupported("platform shell")
+    }
+
+    public func lookupUser(_: String?) throws -> LibboxPlatformUser {
+        throw notSupported("user lookup")
+    }
+
+    public func lookupSFTPServer() throws -> LibboxStringBox {
+        throw notSupported("SFTP server")
+    }
+
+    public func readSystemSSHHostKey() throws -> LibboxStringBox {
+        throw notSupported("system SSH host key")
+    }
+
+    public func usePlatformBridge() -> Bool {
+        false
+    }
+
+    public func createBridge(_: LibboxBridgeOptions?) throws -> any LibboxBridgeSessionProtocol {
+        throw notSupported("bridge")
+    }
+
+    public func usePlatformAutoRedirect() -> Bool {
+        false
+    }
+
+    public func createAutoRedirect(_: Data?, handler _: (any LibboxAutoRedirectHandlerProtocol)?) throws -> any LibboxAutoRedirectSessionProtocol {
+        throw notSupported("auto redirect")
+    }
+
+    private func notSupported(_ feature: String) -> NSError {
+        NSError(domain: "ExtensionPlatformInterface", code: -1, userInfo: [NSLocalizedDescriptionKey: "\(feature) is not supported on iOS"])
+    }
 }
