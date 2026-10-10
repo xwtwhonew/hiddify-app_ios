@@ -124,16 +124,18 @@ jobs:
 
           # The same policy lets a platform binary open only the IOKit user clients its entitlements list, and Flutter
           # aborts at launch without Metal. These are the GPU and surface clients Apple's own splashboardd holds.
-          GPU_CLIENTS=(
-            AGXCommandQueue AGXDevice AGXDeviceUserClient AGXSharedUserClient AppleJPEGDriverUserClient
-            IOAccelContext IOAccelContext2 IOAccelDevice IOAccelDevice2 IOAccelSharedUserClient IOAccelSharedUserClient2
-            IOAccelSubmitter2 IOMobileFramebufferUserClient IOSurfaceAcceleratorClient IOSurfaceRootUserClient
-          )
-          gpu=(-c "Add :com.apple.security.iokit-user-client-class array")
-          for i in "${!GPU_CLIENTS[@]}"; do
-            gpu+=(-c "Add :com.apple.security.iokit-user-client-class:$i string ${GPU_CLIENTS[$i]}")
-          done
-          /usr/libexec/PlistBuddy "${gpu[@]}" "$RUNNER_TEMP/app.entitlements"
+          # Merged from a file in one command: PlistBuddy aborts when given an Add for each class
+          {
+            echo '<?xml version="1.0" encoding="UTF-8"?>'
+            echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+            echo '<plist version="1.0"><dict><key>com.apple.security.iokit-user-client-class</key><array>'
+            printf '<string>%s</string>\n' \
+              AGXCommandQueue AGXDevice AGXDeviceUserClient AGXSharedUserClient AppleJPEGDriverUserClient \
+              IOAccelContext IOAccelContext2 IOAccelDevice IOAccelDevice2 IOAccelSharedUserClient IOAccelSharedUserClient2 \
+              IOAccelSubmitter2 IOMobileFramebufferUserClient IOSurfaceAcceleratorClient IOSurfaceRootUserClient
+            echo '</array></dict></plist>'
+          } > "$RUNNER_TEMP/gpu.plist"
+          /usr/libexec/PlistBuddy -c "Merge $RUNNER_TEMP/gpu.plist" "$RUNNER_TEMP/app.entitlements"
 
           sign() { codesign --force --sign - --timestamp=none "$@"; }
           xattr -cr "$APP"
