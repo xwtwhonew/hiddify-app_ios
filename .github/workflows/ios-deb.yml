@@ -1,0 +1,153 @@
+name: iOS Deb
+on:
+  workflow_dispatch:
+    inputs:
+      core-version:
+        description: "hiddify-core release to take the iOS library from, e.g. v5.0.0 (draft is the newest core build)"
+        type: string
+        default: "draft"
+  push:
+    branches:
+      - main
+      - ios-deb
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.vscode/'
+      - 'appcast.xml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: '3.38.5'
+  CORE_VERSION: ${{ inputs.core-version || 'draft' }}
+  # Team prefix for the fake-signed identifiers. A jailbroken device checks no certificate, so any value works.
+  TEAM_ID: '0000000000'
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  deb:
+    # Xcode 26 is needed for the Icon Composer app icon (ios/Runner/AppIcon.icon)
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - name: checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2.21.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: 'stable'
+          cache: true
+
+      - name: Install dpkg
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
+        run: brew install dpkg
+
+      - name: Prepare
+        run: make common-prepare
+
+      - name: Download hiddify-core
+        run: |
+          rm -rf ios/Frameworks/HiddifyCore.xcframework
+          curl -fsSL --retry 3 "https://github.com/hiddify/hiddify-core/releases/download/$CORE_VERSION/hiddify-lib-ios.tar.gz" | tar xz -C ios/Frameworks
+          ls ios/Frameworks/HiddifyCore.xcframework
+
+      - name: Build unsigned app
+        run: flutter build ios --release --no-codesign --target lib/main_prod.dart
+
+      - name: Fake-sign
+        run: |
+          APP=build/ios/iphoneos/Runner.app
+          APPEX=$APP/PlugIns/HiddifyPacketTunnel.appex
+          BASE_ID=$(/usr/libexec/PlistBuddy -c 'Print :BASE_BUNDLE_IDENTIFIER' "$APP/Info.plist")
+          APP_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")
+          EXT_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APPEX/Info.plist")
+
+          # The project's entitlements with the build variable filled in, minus the macOS sandbox and push keys,
+          # plus the identifiers a provisioning profile would otherwise supply
+          entitlements() {
+            sed 's/\$(BASE_BUNDLE_IDENTIFIER)/'"$BASE_ID"'/g' "$1" > "$3"
+            for key in aps-environment com.apple.security.app-sandbox com.apple.security.network.client com.apple.security.network.server; do
+              /usr/libexec/PlistBuddy -c "Delete :$key" "$3" > /dev/null 2>&1 || true
+            done
+            /usr/libexec/PlistBuddy \
+              -c "Add :application-identifier string $TEAM_ID.$2" \
+              -c "Add :com.apple.developer.team-identifier string $TEAM_ID" \
+              -c "Add :keychain-access-groups array" \
+              -c "Add :keychain-access-groups:0 string $TEAM_ID.$APP_ID" \
+              "$3"
+          }
+          entitlements ios/Runner/Runner.entitlements "$APP_ID" "$RUNNER_TEMP/app.entitlements"
+          entitlements ios/HiddifyPacketTunnel/HiddifyPacketTunnel.entitlements "$EXT_ID" "$RUNNER_TEMP/tunnel.entitlements"
+
+          sign() { codesign --force --sign - --timestamp=none "$@"; }
+          xattr -cr "$APP"
+          # Inside out: nested code first, then the tunnel extension, then the app that seals them
+          find "$APP" -depth \( -name '*.framework' -o -name '*.dylib' \) -print0 |
+            while IFS= read -r -d '' code; do sign "$code"; done
+          sign --entitlements "$RUNNER_TEMP/tunnel.entitlements" "$APPEX"
+          sign --entitlements "$RUNNER_TEMP/app.entitlements" "$APP"
+          codesign --verify --deep --verbose=2 "$APP"
+          codesign --display --entitlements - "$APPEX"
+          codesign --display --entitlements - "$APP"
+
+      - name: Package
+        run: |
+          APP=build/ios/iphoneos/Runner.app
+          APP_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")
+          VERSION=$(sed -n 's/^version: *//p' pubspec.yaml)-${{ github.run_number }}
+          mkdir -p out
+
+          # $1: dpkg architecture, $2: jailbreak root ("" for rootful)
+          package() {
+            local root=$RUNNER_TEMP/deb-$1 app=$2/Applications/Hiddify.app
+            rm -rf "$root"
+            mkdir -p "$root/DEBIAN" "$root$2/Applications"
+            ditto "$APP" "$root$app"
+            printf '%s\n' \
+              "Package: $APP_ID" \
+              "Name: Hiddify" \
+              "Version: $VERSION" \
+              "Architecture: $1" \
+              "Description: $(sed -n 's/^description: *//p' pubspec.yaml)" \
+              "Maintainer: ${{ github.repository_owner }}" \
+              "Author: Hiddify" \
+              "Section: Networking" \
+              "Depends: firmware (>= 15.5)" > "$root/DEBIAN/control"
+            # Register the app with SpringBoard on install, unregister it on removal
+            printf '#!%s/bin/sh\n%s/usr/bin/uicache -p %s || true\n' "$2" "$2" "$app" > "$root/DEBIAN/postinst"
+            printf '#!%s/bin/sh\ncase "$1" in remove|purge) %s/usr/bin/uicache -u %s || true ;; esac\n' "$2" "$2" "$app" > "$root/DEBIAN/prerm"
+            chmod 0755 "$root/DEBIAN/postinst" "$root/DEBIAN/prerm"
+            xattr -cr "$root"
+            dpkg-deb -Zxz --root-owner-group -b "$root" "out/Hiddify_${VERSION}_$1.deb"
+          }
+          package iphoneos-arm64 /var/jb
+          package iphoneos-arm ""
+          ls -l out
+
+          {
+            echo "### Hiddify $VERSION"
+            echo "- \`iphoneos-arm64\`: rootless jailbreaks (Dopamine, palera1n rootless)"
+            echo "- \`iphoneos-arm\`: rootful jailbreaks (palera1n rootful)"
+            echo
+            echo "hiddify-core: $CORE_VERSION"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: Hiddify-iOS-deb
+          path: out/*.deb
+          if-no-files-found: error
